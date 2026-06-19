@@ -22,7 +22,7 @@ HEADERS = {
 
 def decode_protected_content(page_html):
     """Decode Base64-protected story content"""
-    match = re.search(r'data-protected-payload=["']([^"']+)["']', page_html)
+    match = re.search(r"""data-protected-payload=["']([^"']+)["']""", page_html)
     if match:
         try:
             return base64.b64decode(match.group(1)).decode('utf-8')
@@ -40,7 +40,7 @@ def get_homepage_stories():
 
     for card in story_cards:
         title_match = re.search(
-            r'<h3>.*?<a[^>]+href=["'](/story/[^/]+/)["'][^>]*>(.*?)</a>.*?</h3>',
+            r"""<h3>.*?<a[^>]+href=["'](/story/[^/]+/)["'][^>]*>(.*?)</a>.*?</h3>""",
             card, re.DOTALL
         )
         if not title_match:
