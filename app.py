@@ -22,12 +22,19 @@ HEADERS = {
 # ============ SCRAPER FUNCTIONS ============
 
 def decode_protected_content(page_html):
-    """Decode Base64-protected story content"""
-    match = re.search(r'data-protected-payload=[\"\']([^\"\']+)[\"\']', page_html)
+    """Decode Base64-protected story content.
+    Real site uses double-quoted data-protected-payload attribute.
+    """
+    match = re.search(
+        r"""data-protected-payload=["']([^"']+)["']""",
+        page_html
+    )
+    if not match:
+        match = re.search(r'data-protected-payload=([A-Za-z0-9+/=]+)', page_html)
     if match:
         try:
             return base64.b64decode(match.group(1)).decode('utf-8')
-        except:
+        except Exception:
             return None
     return None
 
@@ -125,11 +132,12 @@ def get_story_info(story_url):
     title_match = re.search(r'<title>([^<]+)</title>', page_html)
     title = title_match.group(1).split('·')[0].strip() if title_match else "Unknown"
 
+    # Real site: <a class="story-author-name" href="/author/username/">username</a>
     author_match = re.search(
-        r'<a[^>]+href=["\']/author/([^/]+/)["\'][^>]*>([^<]+)</a>',
+        r"""href=["']/author/[^/]+/["'][^>]*>([^<]+)</a>""",
         page_html
     )
-    author = author_match.group(2) if author_match else "Unknown"
+    author = author_match.group(1).strip() if author_match else "Unknown"
 
     # Look for chapter links
     chapter_links = re.findall(
@@ -181,12 +189,29 @@ def get_story_info(story_url):
     }
 
 def get_chapter_content(chapter_url):
-    """Fetch and decode a single chapter"""
+    """Fetch and decode a single chapter.
+    
+    Real site structure:
+    <article class="reader">
+      <header class="reader-header"><h1>Chapter Title</h1></header>
+      <div class="chapter-body protected-reader-content"
+           data-protected-payload="BASE64...">
+      </div>
+    </article>
+    """
     resp = requests.get(chapter_url, headers=HEADERS, timeout=15)
     page_html = resp.text
 
-    title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', page_html)
-    title = title_match.group(1).strip() if title_match else ""
+    # Extract chapter title from <h1> inside reader-header
+    header_match = re.search(r'<header[^>]*class="reader-header"[^>]*>(.*?)</header>', page_html, re.DOTALL)
+    title = ""
+    if header_match:
+        h1_match = re.search(r'<h1[^>]*>([^<]+)</h1>', header_match.group(1))
+        title = h1_match.group(1).strip() if h1_match else ""
+    if not title:
+        # Fallback: first h1 on page
+        h1_match = re.search(r'<h1[^>]*>([^<]+)</h1>', page_html)
+        title = h1_match.group(1).strip() if h1_match else ""
 
     content = decode_protected_content(page_html)
 
@@ -195,11 +220,24 @@ def get_chapter_content(chapter_url):
         clean_paras = []
         for p in paras:
             text = re.sub(r'<[^>]+>', '', p).strip()
-            if text and len(text) > 5:
+            if text:  # keep ALL non-empty paragraphs including short dialogue
                 clean_paras.append(text)
         return {"title": title, "paragraphs": clean_paras}
 
-    return {"title": title, "paragraphs": []}
+    # Fallback: extract paragraphs from chapter-body div (avoids header junk)
+    body_match = re.search(r'<div[^>]*class="[^"]*chapter-body[^"]*"[^>]*>(.*?)</div>', page_html, re.DOTALL)
+    if body_match:
+        paras = re.findall(r'<p[^>]*>(.*?)</p>', body_match.group(1), re.DOTALL)
+    else:
+        paras = re.findall(r'<p[^>]*>(.*?)</p>', page_html, re.DOTALL)
+
+    clean_paras = []
+    for p in paras:
+        text = re.sub(r'<[^>]+>', '', p).strip()
+        if text:
+            clean_paras.append(text)
+
+    return {"title": title, "paragraphs": clean_paras}
 
 def get_all_story_content(story_url):
     """Get all content from a story, including chapters and parts"""
