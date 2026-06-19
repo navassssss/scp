@@ -322,9 +322,9 @@ HOME_TEMPLATE = """
     {% endif %}
 
     <div class="footer">
-        <p>KK Stories Kindle Edition - Real-time Scraper</p>
+        <p>Kindle Edition - Real-time Scraper</p>
         <p>Minimal design for e-readers and low-end devices</p>
-        <p>{{ stories|length }} stories loaded from kkstories.com</p>
+        <p>{{ stories|length }} stories loaded from </p>
     </div>
 
     <script>
