@@ -76,7 +76,7 @@ def get_homepage_stories():
         comments = comm_match.group(1) if comm_match else ""
 
         cat_matches = re.findall(
-            r'<a[^>]+href=["']/library/\?category=[^"']+["'][^>]*>([^<]+)</a>',
+            r"""<a[^>]+href=["']/library/\?category=[^"']+["'][^>]*>([^<]+)</a>""",
             card
         )
         categories = ', '.join(cat_matches) if cat_matches else ""
@@ -103,13 +103,13 @@ def get_story_info(story_url):
     title = title_match.group(1).split('·')[0].strip() if title_match else "Unknown"
 
     author_match = re.search(
-        r'<a[^>]+href=["']/author/([^/]+)/["'][^>]*>([^<]+)</a>',
+        r"""<a[^>]+href=["']/author/([^/]+)/["'][^>]*>([^<]+)</a>""",
         page_html
     )
     author = author_match.group(2) if author_match else "Unknown"
 
     chapter_links = re.findall(
-        r'href=["'](/story/[^/]+/chapter/\d+/)["']',
+        r"""href=["'](/story/[^/]+/chapter/\d+/)["']""",
         page_html
     )
     unique_chapters = sorted(
@@ -118,7 +118,7 @@ def get_story_info(story_url):
     )
 
     desc_match = re.search(
-        r'<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']',
+        r"""<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']""",
         page_html
     )
     description = desc_match.group(1) if desc_match else ""
