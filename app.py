@@ -1,6 +1,6 @@
 """
 KK Stories - Kindle Edition Web App
-Real-time scraper for kkstories.com with global search
+Real-time scraper for kkstories.com with global search & multi-part support
 """
 
 from flask import Flask, render_template_string, request, redirect
@@ -10,6 +10,7 @@ import base64
 import html as html_module
 import os
 import urllib.parse
+import time
 
 app = Flask(__name__)
 
@@ -22,13 +23,11 @@ HEADERS = {
 
 def decode_protected_content(page_html):
     """Decode Base64-protected story content"""
-    match = re.search(r"""data-protected-payload=["']([^"']+)["']""", page_html)
-    if not match:
-        match = re.search(r'data-protected-payload=([A-Za-z0-9+/=]+)', page_html)
+    match = re.search(r'data-protected-payload=[\"\']([^\"\']+)[\"\']', page_html)
     if match:
         try:
             return base64.b64decode(match.group(1)).decode('utf-8')
-        except Exception:
+        except:
             return None
     return None
 
@@ -101,7 +100,7 @@ def get_homepage_stories():
 def search_stories(query, page=1):
     """Search stories across the entire site"""
     if not query:
-        return [], 0
+        return [], 0, False
 
     encoded_query = urllib.parse.quote(query)
     url = f"{BASE_URL}/library/?q={encoded_query}"
@@ -111,61 +110,74 @@ def search_stories(query, page=1):
     resp = requests.get(url, headers=HEADERS, timeout=15)
     stories = parse_story_cards(resp.text)
 
-    # Check for total results count
     total_match = re.search(r'(\d+)\s+results?', resp.text, re.IGNORECASE)
     total = int(total_match.group(1)) if total_match else len(stories)
 
-    # Check for pagination
     has_more = f'page={page + 1}' in resp.text
 
     return stories, total, has_more
 
-def get_all_chapter_links(story_url):
-    """Collect ALL chapter links, following pagination if needed"""
-    all_links = set()
-    page = 1
-    while True:
-        url = story_url if page == 1 else f"{story_url}?page={page}"
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
-        except Exception:
-            break
-        page_html = resp.text
-        found = re.findall(r"""href=["'](/story/[^/]+/chapter/\d+/)["']""", page_html)
-        before = len(all_links)
-        all_links.update(found)
-        if len(all_links) == before or not found:
-            break
-        if f'page={page + 1}' not in page_html:
-            break
-        page += 1
-    return sorted(
-        all_links,
-        key=lambda x: int(re.search(r'chapter/(\d+)', x).group(1))
-    )
-
-
 def get_story_info(story_url):
-    """Get story metadata and full chapter list (all pages)"""
+    """Get story metadata, chapters, AND part links"""
     resp = requests.get(story_url, headers=HEADERS, timeout=15)
     page_html = resp.text
 
     title_match = re.search(r'<title>([^<]+)</title>', page_html)
-    title = title_match.group(1).split('\u00b7')[0].strip() if title_match else 'Unknown'
+    title = title_match.group(1).split('·')[0].strip() if title_match else "Unknown"
 
-    author_match = re.search(r"""<a[^>]+href=["']/author/([^/]+/)["'][^>]*>([^<]+)</a>""", page_html)
-    author = author_match.group(2) if author_match else 'Unknown'
+    author_match = re.search(
+        r'<a[^>]+href=["\']/author/([^/]+/)["\'][^>]*>([^<]+)</a>',
+        page_html
+    )
+    author = author_match.group(2) if author_match else "Unknown"
 
-    desc_match = re.search(r"""<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']""", page_html)
-    description = desc_match.group(1) if desc_match else ''
+    # Look for chapter links
+    chapter_links = re.findall(
+        r'href=["\'](/story/[^/]+/chapter/\d+/)["\']',
+        page_html
+    )
+    unique_chapters = sorted(
+        set(chapter_links),
+        key=lambda x: int(re.search(r'chapter/(\d+)', x).group(1))
+    )
 
-    unique_chapters = get_all_chapter_links(story_url)
+    # NEW: Detect multi-part stories (separate pages like "Part 2", "Part 3")
+    part_links = []
+
+    # Look for "Previous Post" / "Next Post" navigation
+    prev_match = re.search(
+        r'←\s*Previous.*?href=["\'](/story/[^"\']+)["\']',
+        page_html, re.DOTALL | re.IGNORECASE
+    )
+    next_match = re.search(
+        r'Next\s*→.*?href=["\'](/story/[^"\']+)["\']',
+        page_html, re.DOTALL | re.IGNORECASE
+    )
+
+    if prev_match:
+        part_links.append(prev_match.group(1))
+    if next_match:
+        part_links.append(next_match.group(1))
+
+    # Look for "Part X" links in content
+    part_pattern = re.findall(
+        r'href=["\'](/story/[^"\']*(?:part[-_]?\d+|പാർട്ട്)[^"\']*/?)["\']',
+        page_html, re.IGNORECASE
+    )
+    part_links.extend(part_pattern)
+
+    desc_match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        page_html
+    )
+    description = desc_match.group(1) if desc_match else ""
 
     return {
         "title": title,
         "author": author,
         "description": description,
-        "chapters": unique_chapters
+        "chapters": unique_chapters,
+        "parts": list(set(part_links))
     }
 
 def get_chapter_content(chapter_url):
@@ -183,19 +195,84 @@ def get_chapter_content(chapter_url):
         clean_paras = []
         for p in paras:
             text = re.sub(r'<[^>]+>', '', p).strip()
-            if text:  # keep ALL non-empty paragraphs, even short dialogue
+            if text and len(text) > 5:
                 clean_paras.append(text)
         return {"title": title, "paragraphs": clean_paras}
 
-    # Fallback: try extracting plain paragraphs without base64
-    paras = re.findall(r'<p[^>]*>(.*?)</p>', page_html, re.DOTALL)
-    clean_paras = []
-    for p in paras:
-        text = re.sub(r'<[^>]+>', '', p).strip()
-        if text:
-            clean_paras.append(text)
+    return {"title": title, "paragraphs": []}
 
-    return {"title": title, "paragraphs": clean_paras}
+def get_all_story_content(story_url):
+    """Get all content from a story, including chapters and parts"""
+    info = get_story_info(story_url)
+    all_content = []
+    chapter_num = 1
+
+    # Fetch chapters from main story
+    if info["chapters"]:
+        for ch_path in info["chapters"]:
+            ch_url = BASE_URL + ch_path
+            ch_data = get_chapter_content(ch_url)
+            all_content.append({
+                "number": chapter_num,
+                "title": ch_data["title"],
+                "paragraphs": ch_data["paragraphs"]
+            })
+            chapter_num += 1
+            time.sleep(0.3)  # Be nice to the server
+    else:
+        # If no chapters, try to get content from story page itself
+        resp = requests.get(story_url, headers=HEADERS, timeout=15)
+        content = decode_protected_content(resp.text)
+        if content:
+            paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
+            clean_paras = []
+            for p in paras:
+                text = re.sub(r'<[^>]+>', '', p).strip()
+                if text and len(text) > 5:
+                    clean_paras.append(text)
+            all_content.append({
+                "number": 1,
+                "title": info["title"],
+                "paragraphs": clean_paras
+            })
+
+    # NEW: Fetch content from linked parts (multi-part stories)
+    for part_url_path in info.get("parts", []):
+        part_url = BASE_URL + part_url_path
+        part_info = get_story_info(part_url)
+
+        if part_info["chapters"]:
+            for ch_path in part_info["chapters"]:
+                ch_url = BASE_URL + ch_path
+                ch_data = get_chapter_content(ch_url)
+                all_content.append({
+                    "number": chapter_num,
+                    "title": ch_data["title"] or part_info["title"],
+                    "paragraphs": ch_data["paragraphs"]
+                })
+                chapter_num += 1
+                time.sleep(0.3)
+        else:
+            # Single-page part
+            resp = requests.get(part_url, headers=HEADERS, timeout=15)
+            content = decode_protected_content(resp.text)
+            if content:
+                paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
+                clean_paras = []
+                for p in paras:
+                    text = re.sub(r'<[^>]+>', '', p).strip()
+                    if text and len(text) > 5:
+                        clean_paras.append(text)
+                all_content.append({
+                    "number": chapter_num,
+                    "title": part_info["title"],
+                    "paragraphs": clean_paras
+                })
+                chapter_num += 1
+
+        time.sleep(0.5)
+
+    return info, all_content
 
 # ============ HTML TEMPLATES ============
 
@@ -299,6 +376,11 @@ BASE_STYLE = """
         background: #f0f0f0; padding: 10px 15px;
         font-size: 14px; color: #555;
         border-bottom: 1px solid #ddd;
+    }
+    .warning {
+        background: #fff3cd; color: #856404;
+        padding: 12px 15px; border-left: 3px solid #ffc107;
+        margin: 15px; font-size: 14px;
     }
     @media (max-width: 480px) {
         body { font-size: 15px; }
@@ -554,6 +636,11 @@ READER_TEMPLATE = """
             border-top: 1px solid #eee; text-align: center;
             font-size: 12px; color: #999;
         }
+        .warning {
+            background: #fff3cd; color: #856404;
+            padding: 12px; border-left: 3px solid #ffc107;
+            margin-bottom: 20px; font-size: 14px;
+        }
         @media (max-width: 480px) {
             body { font-size: 16px; padding: 15px; }
             h1 { font-size: 20px; }
@@ -569,6 +656,12 @@ READER_TEMPLATE = """
 
     <h1>{{ info.title }}</h1>
     <div class="author">by {{ info.author }}</div>
+
+    {% if info.parts %}
+    <div class="warning">
+        This story has {{ info.parts|length }} linked part(s). All content combined.
+    </div>
+    {% endif %}
 
     {% if info.description %}
     <div class="description">{{ info.description }}</div>
@@ -646,22 +739,13 @@ def search():
 
 @app.route("/read/story/<path:slug>/")
 def read_story(slug):
-    """Reader page - scrape all chapters and combine"""
+    """Reader page - scrape all chapters and parts, combine into one"""
     try:
         story_url = f"{BASE_URL}/story/{slug}/"
-        info = get_story_info(story_url)
+        info, chapters = get_all_story_content(story_url)
 
-        if not info["chapters"]:
-            return f"<h1>No chapters found</h1><p>This story may not have any chapters.</p><a href='/'>Back</a>", 404
-
-        chapters = []
-        for ch_path in info["chapters"]:
-            ch_data = get_chapter_content(BASE_URL + ch_path)
-            chapters.append({
-                "number": len(chapters) + 1,
-                "title": ch_data["title"],
-                "paragraphs": ch_data["paragraphs"]
-            })
+        if not chapters:
+            return f"<h1>No content found</h1><p>This story may not have any readable content.</p><a href='/'>Back</a>", 404
 
         return render_template_string(
             READER_TEMPLATE,
@@ -681,7 +765,7 @@ def read_chapter(slug, ch_num):
 if __name__ == "__main__":
     print("=" * 50)
     print("KK Stories - Kindle Edition Web App")
-    print("Global Search Enabled")
+    print("Global Search + Multi-Part Support")
     print("=" * 50)
     print("Open: http://localhost:5000")
     print("=" * 50)
