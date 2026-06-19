@@ -18,6 +18,8 @@ BASE_URL = "https://kkstories.com"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
+REQUEST_TIMEOUT = 20       # seconds per HTTP request
+MAX_CHAPTER_PAGES = 50     # safety cap — no chapter should exceed 50 pages
 
 # ============ SCRAPER FUNCTIONS ============
 
@@ -101,7 +103,7 @@ def parse_story_cards(page_html):
 
 def get_homepage_stories():
     """Scrape homepage for all stories"""
-    resp = requests.get(BASE_URL, headers=HEADERS, timeout=15)
+    resp = requests.get(BASE_URL, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     return parse_story_cards(resp.text)
 
 def search_stories(query, page=1):
@@ -114,7 +116,7 @@ def search_stories(query, page=1):
     if page > 1:
         url += f"&page={page}"
 
-    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     stories = parse_story_cards(resp.text)
 
     total_match = re.search(r'(\d+)\s+results?', resp.text, re.IGNORECASE)
@@ -126,7 +128,7 @@ def search_stories(query, page=1):
 
 def get_story_info(story_url):
     """Get story metadata, chapters, AND part links"""
-    resp = requests.get(story_url, headers=HEADERS, timeout=15)
+    resp = requests.get(story_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     page_html = resp.text
 
     title_match = re.search(r'<title>([^<]+)</title>', page_html)
@@ -157,7 +159,7 @@ def get_story_info(story_url):
         # Fetch the next page
         ch_page = next_page_num
         try:
-            pg_resp = requests.get(f'{story_url}?page={ch_page}', headers=HEADERS, timeout=15)
+            pg_resp = requests.get(f'{story_url}?page={ch_page}', headers=HEADERS, timeout=REQUEST_TIMEOUT)
             ch_html = pg_resp.text
         except Exception:
             break
@@ -206,55 +208,72 @@ def get_story_info(story_url):
     }
 
 def get_chapter_content(chapter_url):
-    """Fetch and decode a single chapter.
+    """Fetch and decode a single chapter, following all content pages.
+    
+    IMPORTANT: Each chapter can be split into multiple pages (e.g. ?page=2).
+    We must collect content from ALL pages and concatenate them.
     
     Real site structure:
     <article class="reader">
-      <header class="reader-header"><h1>Chapter Title</h1></header>
+      <header class="reader-header"><h1>Title</h1></header>
       <div class="chapter-body protected-reader-content"
            data-protected-payload="BASE64...">
       </div>
     </article>
     """
-    resp = requests.get(chapter_url, headers=HEADERS, timeout=15)
+    resp = requests.get(chapter_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     page_html = resp.text
 
-    # Extract chapter title from <h1> inside reader-header
+    # Extract chapter title from <h1> inside reader-header (first page only)
     header_match = re.search(r'<header[^>]*class="reader-header"[^>]*>(.*?)</header>', page_html, re.DOTALL)
     title = ""
     if header_match:
         h1_match = re.search(r'<h1[^>]*>([^<]+)</h1>', header_match.group(1))
         title = h1_match.group(1).strip() if h1_match else ""
     if not title:
-        # Fallback: first h1 on page
         h1_match = re.search(r'<h1[^>]*>([^<]+)</h1>', page_html)
         title = h1_match.group(1).strip() if h1_match else ""
 
-    content = decode_protected_content(page_html)
+    # Collect content from ALL pages of this chapter
+    all_paragraphs = []
+    pg_num = 1
+    pg_html = page_html  # first page already fetched
 
-    if content:
-        paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
-        clean_paras = []
-        for p in paras:
-            text = re.sub(r'<[^>]+>', '', p).strip()
-            if text:  # keep ALL non-empty paragraphs including short dialogue
-                clean_paras.append(text)
-        return {"title": title, "paragraphs": clean_paras}
+    while pg_num <= MAX_CHAPTER_PAGES:
+        # Decode protected content
+        content = decode_protected_content(pg_html)
 
-    # Fallback: extract paragraphs from chapter-body div (avoids header junk)
-    body_match = re.search(r'<div[^>]*class="[^"]*chapter-body[^"]*"[^>]*>(.*?)</div>', page_html, re.DOTALL)
-    if body_match:
-        paras = re.findall(r'<p[^>]*>(.*?)</p>', body_match.group(1), re.DOTALL)
-    else:
-        paras = re.findall(r'<p[^>]*>(.*?)</p>', page_html, re.DOTALL)
+        if content:
+            paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
+            for p in paras:
+                text = re.sub(r'<[^>]+>', '', p).strip()
+                if text:
+                    all_paragraphs.append(text)
+        else:
+            # Fallback: extract from chapter-body div to avoid header/nav junk
+            body_match = re.search(r'<div[^>]*class="[^"]*chapter-body[^"]*"[^>]*>(.*?)</div>', pg_html, re.DOTALL)
+            source = body_match.group(1) if body_match else pg_html
+            paras = re.findall(r'<p[^>]*>(.*?)</p>', source, re.DOTALL)
+            for p in paras:
+                text = re.sub(r'<[^>]+>', '', p).strip()
+                if text:
+                    all_paragraphs.append(text)
 
-    clean_paras = []
-    for p in paras:
-        text = re.sub(r'<[^>]+>', '', p).strip()
-        if text:
-            clean_paras.append(text)
+        # Check if there is a next page for this chapter content
+        next_pg = pg_num + 1
+        if f'?page={next_pg}' not in pg_html and f'page={next_pg}' not in pg_html:
+            break  # No more pages
 
-    return {"title": title, "paragraphs": clean_paras}
+        # Fetch next page
+        pg_num = next_pg
+        try:
+            sep = "&" if "?" in chapter_url else "?"
+            pg_resp = requests.get(f"{chapter_url}{sep}page={pg_num}", headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            pg_html = pg_resp.text
+        except Exception:
+            break
+
+    return {"title": title, "paragraphs": all_paragraphs}
 
 def get_all_story_content(story_url):
     """Get all content from a story, including chapters and parts"""
@@ -276,7 +295,7 @@ def get_all_story_content(story_url):
             time.sleep(0.3)  # Be nice to the server
     else:
         # If no chapters, try to get content from story page itself
-        resp = requests.get(story_url, headers=HEADERS, timeout=15)
+        resp = requests.get(story_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         content = decode_protected_content(resp.text)
         if content:
             paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
@@ -309,7 +328,7 @@ def get_all_story_content(story_url):
                 time.sleep(0.3)
         else:
             # Single-page part
-            resp = requests.get(part_url, headers=HEADERS, timeout=15)
+            resp = requests.get(part_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             content = decode_protected_content(resp.text)
             if content:
                 paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
