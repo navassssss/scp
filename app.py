@@ -139,13 +139,30 @@ def get_story_info(story_url):
     )
     author = author_match.group(1).strip() if author_match else "Unknown"
 
-    # Look for chapter links
-    chapter_links = re.findall(
-        r'href=["\'](/story/[^/]+/chapter/\d+/)["\']',
-        page_html
-    )
+    # Collect ALL chapter links across all paginated pages
+    # (Site paginates at 24 chapters per page using ?page=N)
+    all_chapter_links = set()
+    ch_page = 1
+    ch_html = page_html  # first page already fetched
+    while True:
+        found = re.findall(
+            r'href="(/story/[^/]+/chapter/\d+/)"',
+            ch_html
+        )
+        all_chapter_links.update(found)
+        # Check if there is a next page in the pagination nav
+        next_page_num = ch_page + 1
+        if f'?page={next_page_num}' not in ch_html and f'page={next_page_num}' not in ch_html:
+            break  # no more pages
+        # Fetch the next page
+        ch_page = next_page_num
+        try:
+            pg_resp = requests.get(f'{story_url}?page={ch_page}', headers=HEADERS, timeout=15)
+            ch_html = pg_resp.text
+        except Exception:
+            break
     unique_chapters = sorted(
-        set(chapter_links),
+        all_chapter_links,
         key=lambda x: int(re.search(r'chapter/(\d+)', x).group(1))
     )
 
