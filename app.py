@@ -658,7 +658,7 @@ READER_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ info.title }} - Full Story</title>
+    <title>{{ info.title }} - Chapter {{ chapter.number }}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -671,101 +671,89 @@ READER_TEMPLATE = """
             background: #f5f5f5; padding: 10px;
             margin-bottom: 20px; border-radius: 4px;
             font-size: 14px; display: flex; justify-content: space-between;
+            align-items: center; gap: 10px;
         }
         .nav a { color: #c0392b; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
-        h1 {
-            font-size: 24px; margin-bottom: 8px;
-            color: #1a1a1a; border-bottom: 2px solid #c0392b;
-            padding-bottom: 10px;
+        .nav-btn {
+            display: inline-block; padding: 6px 14px;
+            background: #1a1a1a; color: #fff !important;
+            border-radius: 4px; font-size: 13px;
+            text-decoration: none !important;
         }
-        .author {
-            font-size: 14px; color: #666;
-            margin-bottom: 20px; font-style: italic;
+        .nav-btn:hover { background: #c0392b !important; }
+        .nav-btn.disabled { background: #ccc; pointer-events: none; }
+        h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a;
+             border-bottom: 2px solid #c0392b; padding-bottom: 10px; }
+        .author { font-size: 14px; color: #666; margin-bottom: 10px; font-style: italic; }
+        .chapter-info {
+            font-size: 13px; color: #888; margin-bottom: 25px;
+            padding: 8px 12px; background: #f9f9f9; border-radius: 4px;
         }
         .description {
             font-size: 14px; color: #555; background: #f9f9f9;
             padding: 15px; border-left: 3px solid #c0392b;
-            margin-bottom: 30px; line-height: 1.6;
+            margin-bottom: 25px; line-height: 1.6;
         }
-        h2 {
-            font-size: 20px; margin-top: 40px; margin-bottom: 15px;
-            color: #333; border-bottom: 1px solid #eee;
-            padding-bottom: 8px;
-        }
-        .chapter-num {
-            color: #c0392b; font-size: 0.8em; margin-right: 8px;
-        }
+        h2 { font-size: 20px; margin-top: 30px; margin-bottom: 15px;
+             color: #333; border-bottom: 1px solid #eee; padding-bottom: 8px; }
         p { margin-bottom: 1.3em; text-align: justify; }
-        hr { border: none; border-top: 1px dashed #ccc; margin: 40px 0; }
-        .toc {
-            background: #f9f9f9; padding: 15px;
-            margin-bottom: 30px; border-radius: 4px;
+        .chapter-nav {
+            display: flex; justify-content: space-between; align-items: center;
+            margin: 40px 0; padding: 15px; background: #f5f5f5; border-radius: 4px;
+            font-size: 14px;
         }
-        .toc h3 { font-size: 16px; margin-bottom: 10px; color: #333; }
-        .toc ul { list-style: none; padding-left: 0; }
-        .toc li { padding: 4px 0; font-size: 14px; }
-        .toc a { color: #333; text-decoration: none; }
-        .toc a:hover { color: #c0392b; }
-        .footer {
-            margin-top: 50px; padding-top: 20px;
-            border-top: 1px solid #eee; text-align: center;
-            font-size: 12px; color: #999;
-        }
-        .warning {
-            background: #fff3cd; color: #856404;
-            padding: 12px; border-left: 3px solid #ffc107;
-            margin-bottom: 20px; font-size: 14px;
-        }
+        .footer { margin-top: 30px; padding-top: 20px;
+                  border-top: 1px solid #eee; text-align: center;
+                  font-size: 12px; color: #999; }
         @media (max-width: 480px) {
             body { font-size: 16px; padding: 15px; }
-            h1 { font-size: 20px; }
-            h2 { font-size: 18px; }
+            h1 { font-size: 20px; } h2 { font-size: 18px; }
         }
     </style>
 </head>
 <body>
     <div class="nav">
-        <a href="/">Back to Library</a>
-        <span>{{ chapters|length }} chapters</span>
+        <a href="/">&#8592; Library</a>
+        <span>Chapter {{ chapter.number }} / {{ chapter.total }}</span>
     </div>
 
     <h1>{{ info.title }}</h1>
     <div class="author">by {{ info.author }}</div>
+    <div class="chapter-info">Chapter {{ chapter.number }} of {{ chapter.total }}</div>
 
-    {% if info.parts %}
-    <div class="warning">
-        This story has {{ info.parts|length }} linked part(s). All content combined.
-    </div>
-    {% endif %}
-
-    {% if info.description %}
+    {% if info.description and chapter.number == 1 %}
     <div class="description">{{ info.description }}</div>
     {% endif %}
 
-    <div class="toc">
-        <h3>Table of Contents</h3>
-        <ul>
-        {% for ch in chapters %}
-            <li><a href="#ch{{ ch.number }}">Chapter {{ ch.number }}: {{ ch.title or "Untitled" }}</a></li>
+    <h2>{{ chapter.title or "Chapter " ~ chapter.number }}</h2>
+
+    {% if chapter.paragraphs %}
+        {% for para in chapter.paragraphs %}
+        <p>{{ para }}</p>
         {% endfor %}
-        </ul>
+    {% else %}
+        <p style="color:#999;font-style:italic;">No readable content found for this chapter.</p>
+    {% endif %}
+
+    <div class="chapter-nav">
+        {% if chapter.prev_url %}
+        <a href="{{ chapter.prev_url }}" class="nav-btn">&#8592; Previous Chapter</a>
+        {% else %}
+        <span class="nav-btn disabled">&#8592; Previous</span>
+        {% endif %}
+
+        <span>{{ chapter.number }} / {{ chapter.total }}</span>
+
+        {% if chapter.next_url %}
+        <a href="{{ chapter.next_url }}" class="nav-btn">Next Chapter &#8594;</a>
+        {% else %}
+        <span class="nav-btn disabled">Next &#8594;</span>
+        {% endif %}
     </div>
 
-    {% for ch in chapters %}
-    <h2 id="ch{{ ch.number }}">
-        <span class="chapter-num">Chapter {{ ch.number }}</span>
-        {{ ch.title or "" }}
-    </h2>
-    {% for para in ch.paragraphs %}
-    <p>{{ para }}</p>
-    {% endfor %}
-    {% if not loop.last %}<hr>{% endif %}
-    {% endfor %}
-
     <div class="footer">
-        <p>End of {{ info.title }}</p>
-        <p>{{ chapters|length }} chapters | KK Stories Kindle Edition</p>
+        <p>{{ info.title }} | KK Stories Kindle Edition</p>
     </div>
 </body>
 </html>
@@ -815,18 +803,41 @@ def search():
 
 @app.route("/read/story/<path:slug>/")
 def read_story(slug):
-    """Reader page - scrape all chapters and parts, combine into one"""
+    """Reader page - load one chapter at a time to avoid timeouts.
+    
+    ?ch=N  loads chapter N (default: 1)
+    """
     try:
         story_url = f"{BASE_URL}/story/{slug}/"
-        info, chapters = get_all_story_content(story_url)
+        ch_num = request.args.get("ch", 1, type=int)
 
-        if not chapters:
-            return f"<h1>No content found</h1><p>This story may not have any readable content.</p><a href='/'>Back</a>", 404
+        # Get story metadata and full chapter list (fast — no content fetch)
+        info = get_story_info(story_url)
+
+        if not info["chapters"]:
+            return f"<h1>No chapters found</h1><p>This story may not have any chapters.</p><a href='/'>Back</a>", 404
+
+        total_chapters = len(info["chapters"])
+        ch_num = max(1, min(ch_num, total_chapters))  # clamp
+        ch_path = info["chapters"][ch_num - 1]
+
+        # Fetch only the requested chapter (with all its content pages)
+        ch_data = get_chapter_content(BASE_URL + ch_path)
+
+        chapter = {
+            "number": ch_num,
+            "title": ch_data["title"],
+            "paragraphs": ch_data["paragraphs"],
+            "total": total_chapters,
+            "prev_url": f"/read/story/{slug}/?ch={ch_num-1}" if ch_num > 1 else None,
+            "next_url": f"/read/story/{slug}/?ch={ch_num+1}" if ch_num < total_chapters else None,
+        }
 
         return render_template_string(
             READER_TEMPLATE,
             info=info,
-            chapters=chapters
+            chapter=chapter,
+            total_chapters=total_chapters
         )
     except Exception as e:
         return f"<h1>Error reading story</h1><p>{html_module.escape(str(e))}</p><a href='/'>Back</a>", 500
