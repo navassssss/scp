@@ -247,6 +247,7 @@ def get_chapter_content(chapter_url):
             paras = re.findall(r'<p[^>]*>(.*?)</p>', content, re.DOTALL)
             for p in paras:
                 text = re.sub(r'<[^>]+>', '', p).strip()
+                text = html_module.unescape(text)  # convert &quot; &amp; etc.
                 if text:
                     all_paragraphs.append(text)
         else:
@@ -256,6 +257,7 @@ def get_chapter_content(chapter_url):
             paras = re.findall(r'<p[^>]*>(.*?)</p>', source, re.DOTALL)
             for p in paras:
                 text = re.sub(r'<[^>]+>', '', p).strip()
+                text = html_module.unescape(text)  # convert &quot; &amp; etc.
                 if text:
                     all_paragraphs.append(text)
 
