@@ -1,6 +1,6 @@
 """
-KK Stories - Kindle Edition Web App
-Real-time scraper for kkstories.com with global search & multi-part support
+SCP Reader
+Story reader
 """
 
 from flask import Flask, render_template_string, request, redirect
@@ -472,14 +472,14 @@ HOME_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KK Stories - Kindle Edition</title>
+    <title>SCP</title>
     <style>""" + BASE_STYLE + """
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>KK Stories</h1>
-        <p>Kindle Edition - Real-time Scraper</p>
+        <h1>SCP</h1>
+        
     </div>
 
     <div class="search-box">
@@ -558,9 +558,9 @@ HOME_TEMPLATE = """
     {% endif %}
 
     <div class="footer">
-        <p>KK Stories Kindle Edition - Real-time Scraper</p>
+        
         <p>Minimal design for e-readers and low-end devices</p>
-        <p>{{ stories|length }} stories loaded from kkstories.com</p>
+        <p>{{ stories|length }} stories available</p>
     </div>
 </body>
 </html>
@@ -572,14 +572,14 @@ SEARCH_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Search: {{ query }} - KK Stories</title>
+    <title>Search: {{ query }} - SCP</title>
     <style>""" + BASE_STYLE + """
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>KK Stories</h1>
-        <p>Kindle Edition - Global Search</p>
+        <h1>SCP</h1>
+        
     </div>
 
     <div class="search-box">
@@ -645,8 +645,8 @@ SEARCH_TEMPLATE = """
     </div>
 
     <div class="footer">
-        <p>KK Stories Kindle Edition - Global Search</p>
-        <p>Searched kkstories.com library in real-time</p>
+        
+        
     </div>
 </body>
 </html>
@@ -753,7 +753,7 @@ READER_TEMPLATE = """
     </div>
 
     <div class="footer">
-        <p>{{ info.title }} | KK Stories Kindle Edition</p>
+        <p>{{ info.title }}</p>
     </div>
 </body>
 </html>
@@ -851,7 +851,7 @@ def read_chapter(slug, ch_num):
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("KK Stories - Kindle Edition Web App")
+    print("SCP Reader")
     print("Global Search + Multi-Part Support")
     print("=" * 50)
     print("Open: http://localhost:5000")
