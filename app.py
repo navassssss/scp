@@ -542,7 +542,7 @@ LOGIN_TEMPLATE = """
 <body>
   <div class="box">
     <h1>SCP</h1>
-    {{ error_html }}
+    {{ error_html | safe }}
     <form method="POST" action="/login">
       <input type="password" name="pin" placeholder="PIN" autofocus autocomplete="off">
       <button type="submit">Unlock</button>
