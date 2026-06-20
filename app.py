@@ -3,7 +3,7 @@ SCP Reader
 Story reader
 """
 
-from flask import Flask, render_template_string, request, redirect
+from flask import Flask, render_template_string, request, redirect, session, make_response
 import requests
 import re
 import base64
@@ -11,8 +11,50 @@ import html as html_module
 import os
 import urllib.parse
 import time
+import secrets
+import hashlib
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+# ============ AUTH CONFIG ============
+READER_PIN    = os.environ.get('READER_PIN', '0000')
+SESSION_TIMEOUT = 1800   # 30 minutes inactivity
+AUTH_TOKEN_FILE = '/tmp/scp_auth_token.txt'
+
+def get_server_token():
+    """Read the current server-side token (creates on first run)."""
+    if os.path.exists(AUTH_TOKEN_FILE):
+        with open(AUTH_TOKEN_FILE) as f:
+            return f.read().strip()
+    return rotate_server_token()
+
+def rotate_server_token():
+    """Write a fresh random token — invalidates ALL existing sessions."""
+    token = secrets.token_hex(16)
+    with open(AUTH_TOKEN_FILE, 'w') as f:
+        f.write(token)
+    return token
+
+def is_authenticated():
+    """Check session validity: logged in, not timed out, token matches server."""
+    if not session.get('logged_in'):
+        return False
+    # Inactivity timeout
+    if time.time() - session.get('last_activity', 0) > SESSION_TIMEOUT:
+        session.clear()
+        return False
+    # Token must match server (catches stale Kindle cookies after logout)
+    if session.get('token') != get_server_token():
+        session.clear()
+        return False
+    session['last_activity'] = time.time()
+    return True
+
+def login_page(error=None):
+    """Render the Kindle-friendly PIN entry page."""
+    err_html = f'<p class="err">{html_module.escape(error)}</p>' if error else ''
+    return render_template_string(LOGIN_TEMPLATE, error_html=err_html), 401
 
 BASE_URL = "https://kkstories.com"
 HEADERS = {
@@ -466,6 +508,50 @@ BASE_STYLE = """
     }
 """
 
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SCP - Unlock</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: Georgia, serif; background: #fff; color: #111;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .box { text-align: center; width: 100%; max-width: 320px; }
+    h1 { font-size: 28px; margin-bottom: 30px; letter-spacing: 4px; }
+    .err { color: #c0392b; margin-bottom: 15px; font-size: 15px; }
+    input[type=password] {
+      width: 100%; padding: 16px; font-size: 22px;
+      border: 2px solid #ccc; border-radius: 4px;
+      text-align: center; letter-spacing: 6px; margin-bottom: 14px;
+    }
+    input[type=password]:focus { outline: none; border-color: #1a1a1a; }
+    button {
+      width: 100%; padding: 16px; font-size: 18px;
+      background: #1a1a1a; color: #fff;
+      border: none; border-radius: 4px; cursor: pointer;
+    }
+    button:active { background: #c0392b; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>SCP</h1>
+    {{ error_html }}
+    <form method="POST" action="/login">
+      <input type="password" name="pin" placeholder="PIN" autofocus autocomplete="off">
+      <button type="submit">Unlock</button>
+    </form>
+  </div>
+</body>
+</html>
+"""
+
 HOME_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ml">
@@ -479,7 +565,7 @@ HOME_TEMPLATE = """
 <body>
     <div class="header">
         <h1>SCP</h1>
-        
+        <a href="/?logout=1" style="color:#aaa;font-size:14px;text-decoration:none;display:block;margin-top:4px;">[ Lock ]</a>
     </div>
 
     <div class="search-box">
@@ -579,7 +665,7 @@ SEARCH_TEMPLATE = """
 <body>
     <div class="header">
         <h1>SCP</h1>
-        
+        <a href="/?logout=1" style="color:#aaa;font-size:14px;text-decoration:none;display:block;margin-top:4px;">[ Lock ]</a>
     </div>
 
     <div class="search-box">
@@ -716,6 +802,7 @@ READER_TEMPLATE = """
     <div class="nav">
         <a href="/">&#8592; Library</a>
         <span>Chapter {{ chapter.number }} / {{ chapter.total }}</span>
+        <a href="/?logout=1" style="color:#999;font-size:13px;text-decoration:none;">[ Lock ]</a>
     </div>
 
     <h1>{{ info.title }}</h1>
@@ -761,9 +848,42 @@ READER_TEMPLATE = """
 
 # ============ ROUTES ============
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """PIN login form and submission."""
+    # Logout: rotate token → all sessions invalid
+    if request.args.get('logout'):
+        rotate_server_token()
+        session.clear()
+        return redirect('/')
+
+    if is_authenticated():
+        return redirect('/')
+
+    if request.method == 'POST':
+        pin = request.form.get('pin', '')
+        if pin == READER_PIN:
+            token = rotate_server_token()  # invalidate any other device
+            session.clear()
+            session['logged_in'] = True
+            session['token'] = token
+            session['last_activity'] = time.time()
+            return redirect('/')
+        return login_page('Incorrect PIN')
+
+    return login_page()
+
+
 @app.route("/")
 def home():
     """Homepage - scrape and display latest stories"""
+    # Handle logout via ?logout=1 on any page
+    if request.args.get('logout'):
+        rotate_server_token()
+        session.clear()
+        return redirect('/login')
+    if not is_authenticated():
+        return redirect('/login')
     try:
         stories = get_homepage_stories()
         ongoing = [s for s in stories if s.get('status') == 'Ongoing']
@@ -781,6 +901,8 @@ def home():
 @app.route("/search")
 def search():
     """Global search across all stories"""
+    if not is_authenticated():
+        return redirect('/login')
     query = request.args.get('q', '').strip()
     page = request.args.get('page', 1, type=int)
 
@@ -807,6 +929,8 @@ def read_story(slug):
     
     ?ch=N  loads chapter N (default: 1)
     """
+    if not is_authenticated():
+        return redirect('/login')
     try:
         story_url = f"{BASE_URL}/story/{slug}/"
         ch_num = request.args.get("ch", 1, type=int)
